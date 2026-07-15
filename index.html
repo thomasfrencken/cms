@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Site-editor — posities &amp; teksten</title>
+<style>
+  :root {
+    --ink: #222;
+    --paper: #f4f2ee;
+    --accent: #d84a20;
+    --line: #d8d3ca;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "SF Mono", "Consolas", monospace;
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  header {
+    padding: 1rem 1.25rem;
+    border-bottom: 2px solid var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    background: var(--paper);
+    z-index: 10;
+  }
+  header h1 {
+    font-size: 0.95rem;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .sub { font-size: .78rem; color: #666; margin-top: .2rem; }
+  .controls { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  button, .file-btn {
+    font-family: inherit;
+    font-size: .78rem;
+    letter-spacing: .02em;
+    background: var(--paper);
+    color: var(--ink);
+    border: 2px solid var(--ink);
+    padding: .5rem .8rem;
+    cursor: pointer;
+  }
+  button:hover, .file-btn:hover { background: var(--ink); color: var(--paper); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #b83c17; }
+  input[type="file"] { display: none; }
+  #drop {
+    margin: 3rem auto;
+    max-width: 520px;
+    border: 2px dashed var(--line);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    font-size: .85rem;
+  }
+  #drop p { margin: .4rem 0; }
+  #stage {
+    display: none;
+    padding: 1rem;
+  }
+  #stage.active { display: block; }
+  #frame-wrap {
+    border: 2px solid var(--ink);
+    height: calc(100vh - 130px);
+    overflow: hidden;
+    background: #fff;
+  }
+  iframe { width: 100%; height: 100%; border: 0; }
+  #codebox {
+    display: none;
+    margin-top: 1rem;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem;
+    font-size: .75rem;
+    line-height: 1.5;
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+  #codebox.active { display: block; }
+  .hint {
+    font-size: .75rem;
+    color: #666;
+    padding: .5rem 1.25rem 0;
+  }
+  .toast {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    background: var(--ink);
+    color: var(--paper);
+    padding: .6rem 1rem;
+    font-size: .8rem;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .2s, transform .2s;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Site-editor</h1>
+    <div class="sub">Sleep vensters, klik op tekst om te typen, exporteer een bijgewerkte index.html</div>
+  </div>
+  <div class="controls">
+    <label class="file-btn" for="file-input">Laad index.html</label>
+    <input type="file" id="file-input" accept=".html">
+    <button id="btn-open-all" disabled>Open alle vensters</button>
+    <button id="btn-reset" disabled>Reset weergave</button>
+    <button id="btn-show-code" disabled>Toon config-code</button>
+    <button id="btn-export" class="primary" disabled>Download bijgewerkte index.html</button>
+  </div>
+</header>
+
+<div class="hint" id="hint" style="display:none">
+  Sleep een venster via zijn titelbalk naar de gewenste plek. Klik op een tekst met stippellijn om die te bewerken. Klaar? Klik op “Download bijgewerkte index.html”.
+</div>
+
+<div id="drop">
+  <p><strong>Laad hier de index.html van je site.</strong></p>
+  <p>De tool laadt je site precies zoals hij live is, zodat je vensters kunt slepen en teksten kunt bewerken alsof je op de echte pagina zit. Er wordt niets naar internet verstuurd — alles blijft lokaal in je browser.</p>
+</div>
+
+<div id="stage">
+  <div id="frame-wrap"><iframe id="preview"></iframe></div>
+  <pre id="codebox"></pre>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var WINDOW_IDS = ['profile-window', 'code-window', 'play-window', 'atlas-window'];
+  var OPEN_BTN_IDS = { 'profile-window': 'btn-profiel', 'code-window': 'btn-code', 'play-window': 'btn-play', 'atlas-window': 'btn-atlas' };
+
+  var rawHtml = '';
+  var baseConfig = null;
+
+  var fileInput = document.getElementById('file-input');
+  var drop = document.getElementById('drop');
+  var stage = document.getElementById('stage');
+  var hint = document.getElementById('hint');
+  var iframe = document.getElementById('preview');
+  var btnOpenAll = document.getElementById('btn-open-all');
+  var btnReset = document.getElementById('btn-reset');
+  var btnShowCode = document.getElementById('btn-show-code');
+  var btnExport = document.getElementById('btn-export');
+  var codebox = document.getElementById('codebox');
+  var toast = document.getElementById('toast');
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+
+  fileInput.addEventListener('change', function (e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      rawHtml = reader.result;
+      var extracted = extractConfig(rawHtml);
+      if (!extracted) {
+        showToast('Kon geen SITE_CONFIG-blok vinden in dit bestand.');
+        return;
+      }
+      baseConfig = extracted;
+      loadIntoFrame(rawHtml);
+      drop.style.display = 'none';
+      stage.classList.add('active');
+      hint.style.display = 'block';
+      btnOpenAll.disabled = false;
+      btnReset.disabled = false;
+      btnShowCode.disabled = false;
+      btnExport.disabled = false;
+    };
+    reader.readAsText(file);
+  });
+
+  function extractConfig(html) {
+    var m = html.match(/<script id="site-config">([\s\S]*?)<\/script>/);
+    if (!m) return null;
+    var body = m[1];
+    var m2 = body.match(/window\.SITE_CONFIG\s*=\s*(\{[\s\S]*?\});/);
+    if (!m2) return null;
+    try {
+      return (new Function('return (' + m2[1] + ')'))();
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function loadIntoFrame(html) {
+    iframe.srcdoc = html;
+    iframe.onload = function () {
+      var doc = iframe.contentDocument;
+      var win = iframe.contentWindow;
+      if (!doc || !win) return;
+
+      // Bewerk-stijl voor gemarkeerde teksten
+      var style = doc.createElement('style');
+      style.textContent =
+        '[data-cfg], [data-cfg-part] { outline: 1px dashed ' + '#d84a20' + '; outline-offset: 2px; cursor: text; }' +
+        '[data-cfg]:focus, [data-cfg-part]:focus { outline: 2px solid #d84a20; }' +
+        '.window { cursor: default; }';
+      doc.head.appendChild(style);
+
+      // Teksten bewerkbaar maken
+      doc.querySelectorAll('[data-cfg]').forEach(function (el) {
+        if (el.getAttribute('data-cfg') === 'statusbar') return; // container zelf niet
+        el.setAttribute('contenteditable', 'true');
+        el.setAttribute('spellcheck', 'false');
+      });
+      doc.querySelectorAll('[data-cfg-part="statusbar"]').forEach(function (el) {
+        el.setAttribute('contenteditable', 'true');
+        el.setAttribute('spellcheck', 'false');
+      });
+
+      // Voorkom dat links wegnavigeren terwijl je aan het bewerken bent
+      doc.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a');
+        if (!a) return;
+        var isOpener = a.id && OPEN_BTN_IDS[Object.keys(OPEN_BTN_IDS).find(function (k) { return OPEN_BTN_IDS[k] === a.id; })];
+        if (a.target === '_blank' || (a.href && a.href.indexOf('mailto:') === 0)) {
+          e.preventDefault();
+        }
+      }, true);
+    };
+  }
+
+  btnOpenAll.addEventListener('click', function () {
+    var doc = iframe.contentDocument;
+    if (!doc) return;
+    WINDOW_IDS.forEach(function (id, i) {
+      var btnId = OPEN_BTN_IDS[id];
+      var btn = doc.getElementById(btnId);
+      setTimeout(function () { if (btn) btn.click(); }, i * 60);
+    });
+  });
+
+  btnReset.addEventListener('click', function () {
+    loadIntoFrame(rawHtml);
+    showToast('Weergave teruggezet naar de geüploade versie.');
+  });
+
+  function computeBase(doc) {
+    var menubar = doc.querySelector('.menubar');
+    var menubarBottom = menubar ? menubar.getBoundingClientRect().bottom : 0;
+    return { leftBase: 24, topBase: menubarBottom + 24 };
+  }
+
+  function readCurrentConfig() {
+    var doc = iframe.contentDocument;
+    var base = computeBase(doc);
+    var positions = {};
+    // begin met de bestaande config, zodat niet-geopende vensters hun waarde houden
+    Object.keys(baseConfig.positions || {}).forEach(function (id) {
+      positions[id] = baseConfig.positions[id];
+    });
+    WINDOW_IDS.forEach(function (id) {
+      var el = doc.getElementById(id);
+      if (!el || !el.style.left || !el.style.top) return;
+      var rect = el.getBoundingClientRect();
+      positions[id] = {
+        left: Math.round(rect.left - base.leftBase),
+        top: Math.round(rect.top - base.topBase)
+      };
+    });
+
+    var texts = {};
+    doc.querySelectorAll('[data-cfg]').forEach(function (el) {
+      var key = el.getAttribute('data-cfg');
+      if (key === 'statusbar') {
+        texts.statusbar = Array.prototype.map.call(
+          el.querySelectorAll('[data-cfg-part="statusbar"]'),
+          function (s) { return s.textContent.trim(); }
+        );
+      } else {
+        texts[key] = el.textContent.trim();
+      }
+    });
+    doc.querySelectorAll('[data-cfg-href]').forEach(function (el) {
+      var key = el.getAttribute('data-cfg-href');
+      texts[key] = el.getAttribute('href');
+    });
+
+    return { positions: positions, texts: texts };
+  }
+
+  function serializeConfig(cfg) {
+    return 'window.SITE_CONFIG = ' + JSON.stringify(cfg, null, 6) + ';';
+  }
+
+  btnShowCode.addEventListener('click', function () {
+    var cfg = readCurrentConfig();
+    codebox.textContent = serializeConfig(cfg);
+    codebox.classList.toggle('active');
+    btnShowCode.textContent = codebox.classList.contains('active') ? 'Verberg config-code' : 'Toon config-code';
+  });
+
+  btnExport.addEventListener('click', function () {
+    var cfg = readCurrentConfig();
+    var newBlock = '<script id="site-config">\n    ' + serializeConfig(cfg) + '\n  <\/script>';
+    var newHtml = rawHtml.replace(/<script id="site-config">[\s\S]*?<\/script>/, newBlock);
+
+    var blob = new Blob([newHtml], { type: 'text/html' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'index.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Bijgewerkte index.html gedownload.');
+  });
+})();
+</script>
+</body>
+</html>
